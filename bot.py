@@ -184,7 +184,7 @@ async def analyze(
             os.remove(image_path)
 
 
-bot.run(TOKEN))
+bot.run(TOKEN)
 @app_commands.describe(
     screenshot="Upload your Valorant Mobile statistics screenshot."
 )
