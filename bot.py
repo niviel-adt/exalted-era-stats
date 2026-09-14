@@ -9,6 +9,10 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+# Your Exalted Era Discord server
+GUILD_ID = 1545457876552655008
+GUILD = discord.Object(id=GUILD_ID)
+
 
 class ExaltedEraBot(discord.Client):
 
@@ -21,7 +25,13 @@ class ExaltedEraBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()
+
+        # Register commands directly to the Exalted Era server
+        self.tree.copy_global_to(guild=GUILD)
+
+        await self.tree.sync(guild=GUILD)
+
+        print("Slash commands synced to Exalted Era server.")
 
 
 bot = ExaltedEraBot()
@@ -36,7 +46,8 @@ async def on_ready():
 
 @bot.tree.command(
     name="test",
-    description="Check if the Exalted Era Stats Bot is working."
+    description="Check if the Exalted Era Stats Bot is working.",
+    guild=GUILD
 )
 async def test(interaction: discord.Interaction):
 
@@ -49,10 +60,11 @@ async def test(interaction: discord.Interaction):
 
 @bot.tree.command(
     name="analyze",
-    description="Analyze a Valorant statistics screenshot."
+    description="Analyze a Valorant Mobile statistics screenshot.",
+    guild=GUILD
 )
 @app_commands.describe(
-    screenshot="Upload your Valorant scoreboard/statistics screenshot."
+    screenshot="Upload your Valorant Mobile statistics screenshot."
 )
 async def analyze(
     interaction: discord.Interaction,
@@ -69,7 +81,7 @@ async def analyze(
 
     if not screenshot.content_type.startswith("image"):
         await interaction.followup.send(
-            "❌ The file must be an image."
+            "❌ Please upload a valid image file."
         )
         return
 
@@ -78,6 +90,11 @@ async def analyze(
     try:
 
         await screenshot.save(image_path)
+
+        await interaction.followup.send(
+            "🔍 **Reading your Valorant Mobile screenshot...**\n"
+            "🇨🇳 Chinese text detected → translating statistics to English."
+        )
 
         stats = analyze_valorant_image(image_path)
 
@@ -138,11 +155,11 @@ async def analyze(
 
     except Exception as e:
 
-        print("ERROR:", e)
+        print("ANALYSIS ERROR:", e)
 
         await interaction.followup.send(
-            "❌ I couldn't read this screenshot.\n"
-            "Please upload a clear Valorant statistics screen."
+            "❌ **I couldn't read this screenshot.**\n"
+            "Please upload a clear Valorant Mobile China statistics screen."
         )
 
     finally:
