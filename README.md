@@ -1,65 +1,66 @@
-# Exalted Era Valorant Mobile Stats Bot
+# Exalted Era Stats Bot V4 CLEAN
 
-Clean replacement project for the Exalted Era Discord stats bot.
+This version fixes duplicate Discord slash commands.
 
-## What `/analyze` returns
+## Why you were seeing two `/analyze` commands
 
-Only these 7 categories:
+Your GitHub repository still had the older bot at the repository root.
+The newer folder had not actually replaced the root project.
 
-1. Kills
-2. ACS
-3. HS%
-4. Total Matches
-5. K/D
-6. First Bloods
-7. Head / Torso / Leg hit distribution (count + percentage)
+V4 does two command sync operations on startup:
 
-The AI is explicitly told to ignore the left-side radar/polygon chart and read the printed numerical panel on the right.
+1. Deletes old GLOBAL commands for this bot application.
+2. Syncs exactly these five GUILD commands to Exalted Era:
+
+- `/analyze`
+- `/stats`
+- `/progress`
+- `/player`
+- `/leaderboard`
+
+## IMPORTANT upload instructions
+
+The ZIP has the project files directly at its root.
+
+In GitHub, your repository root should show:
+
+- bot.py
+- gemini.py
+- database.py
+- ratings.py
+- requirements.txt
+- Procfile
+- README.md
+- .gitignore
+
+Do NOT leave the old bot.py beside a nested `exalted-era-stats-v4-clean/` folder.
 
 ## Railway variables
 
-Add these in **Railway > Variables**:
+Required:
 
 - `DISCORD_TOKEN`
 - `GEMINI_API_KEY`
+- `GUILD_ID=1545457876552655008`
 
-Optional:
+Recommended:
 
-- `GEMINI_MODEL` — defaults to `gemini-3.6-flash`
-
-Do **not** put your Discord token or Gemini API key in GitHub.
-
-## Replace your current repository
-
-1. Download and extract this folder.
-2. Delete the old project files from your GitHub repository.
-3. Upload the contents of this folder to the repository root.
-4. Commit the changes.
-5. Let Railway redeploy.
-6. In Railway, verify the two required variables above still exist.
-7. Refresh Discord after Railway finishes deploying.
+- `DATABASE_URL`
+- `STATS_ARCHIVE_CHANNEL_ID`
 
 ## Expected Railway startup log
 
 ```text
-Starting Exalted Era Stats Bot...
-Synced 1 slash command(s) to Exalted Era: /analyze
-Logged in as: ...
-Exalted Era Stats Bot is online!
+Global command cleanup complete: 0 global command(s) remain.
+Guild sync complete: 5 command(s): /analyze, /stats, /progress, /player, /leaderboard
+Exalted Era Stats Bot V4 CLEAN is online.
 ```
 
-This version intentionally registers only `/analyze`. Syncing the current guild command tree should remove stale old guild commands such as `/test`.
+If Discord still shows two `/analyze` commands after this exact log:
+- press Ctrl+R / restart Discord;
+- confirm there is not a second Discord bot/application installed in the server with its own `/analyze`;
+- confirm only one Railway service is running this bot token.
 
-## Screenshot support
+## `/progress`
 
-- PNG
-- JPG / JPEG
-- WEBP
-
-The command is:
-
-```text
-/analyze
-```
-
-Attach the Valorant Mobile player-statistics screenshot when Discord asks for the screenshot.
+`/progress` shows the latest screenshot saved for the selected player and compares it with the previous snapshot.

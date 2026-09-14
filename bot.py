@@ -2,49 +2,207 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+from database import Database
 from gemini import analyze_valorant_image
+from ratings import calculate_rating, rating_label
 
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = 1545457876552655008
-GUILD = discord.Object(id=GUILD_ID)
+GUILD_ID = int(os.getenv("GUILD_ID", "1545457876552655008"))
+ARCHIVE_CHANNEL_ID = int(os.getenv("STATS_ARCHIVE_CHANNEL_ID", "0") or 0)
 
 if not TOKEN:
-    raise RuntimeError(
-        "DISCORD_TOKEN is missing. Add it in Railway > Variables."
-    )
+    raise RuntimeError("DISCORD_TOKEN is missing in Railway Variables.")
+
+GUILD = discord.Object(id=GUILD_ID)
+db = Database()
 
 
-def show(value):
-    """Display a normal value without turning 0 into N/A."""
-    return "N/A" if value is None else str(value)
+def show(value, digits: Optional[int] = None):
+    if value is None:
+        return "N/A"
+    if isinstance(value, int):
+        return f"{value:,}"
+    if isinstance(value, float):
+        digits = 2 if digits is None else digits
+        text = f"{value:.{digits}f}"
+        return text.rstrip("0").rstrip(".")
+    return str(value)
 
 
 def show_percent(value):
-    return "N/A" if value is None else f"{value}%"
+    return "N/A" if value is None else f"{show(value, 1)}%"
+
+
+def hit_line(part: dict):
+    if not part:
+        return "N/A"
+    count = part.get("count")
+    pct = part.get("percentage")
+    if count is None and pct is None:
+        return "N/A"
+    return f"**{show_percent(pct)}**\n{show(count)} Hits"
+
+
+def delta_text(current, previous, *, percent=False, digits=2):
+    if current is None or previous is None:
+        return "N/A"
+    change = current - previous
+    arrow = "▲" if change > 0 else "▼" if change < 0 else "•"
+    sign = "+" if change > 0 else ""
+    suffix = "%" if percent else ""
+    return f"{arrow} {sign}{show(change, digits)}{suffix}"
+
+
+def snapshot_stats(snapshot: dict):
+    return {
+        "kills": snapshot.get("kills"),
+        "acs": snapshot.get("acs"),
+        "headshot_percentage": snapshot.get("headshot_percentage"),
+        "total_matches": snapshot.get("total_matches"),
+        "kd_ratio": snapshot.get("kd_ratio"),
+        "first_bloods": snapshot.get("first_bloods"),
+        "hit_distribution": {
+            "head": {
+                "count": snapshot.get("head_count"),
+                "percentage": snapshot.get("head_percentage"),
+            },
+            "torso": {
+                "count": snapshot.get("torso_count"),
+                "percentage": snapshot.get("torso_percentage"),
+            },
+            "leg": {
+                "count": snapshot.get("leg_count"),
+                "percentage": snapshot.get("leg_percentage"),
+            },
+        },
+    }
+
+
+def add_core_stats(embed: discord.Embed, stats: dict):
+    embed.add_field(name="⚔️ Kills", value=show(stats.get("kills")), inline=True)
+    embed.add_field(name="🎯 ACS", value=show(stats.get("acs"), 1), inline=True)
+    embed.add_field(
+        name="💥 HS%",
+        value=show_percent(stats.get("headshot_percentage")),
+        inline=True,
+    )
+    embed.add_field(
+        name="🎮 Total Matches",
+        value=show(stats.get("total_matches")),
+        inline=True,
+    )
+    embed.add_field(
+        name="⚔️ K/D",
+        value=show(stats.get("kd_ratio"), 2),
+        inline=True,
+    )
+    embed.add_field(
+        name="🔥 First Bloods",
+        value=show(stats.get("first_bloods")),
+        inline=True,
+    )
+
+
+def add_hit_distribution(embed: discord.Embed, stats: dict):
+    dist = stats.get("hit_distribution") or {}
+    embed.add_field(
+        name="──────── HIT DISTRIBUTION ────────",
+        value="\u200b",
+        inline=False,
+    )
+    embed.add_field(
+        name="🎯 Head",
+        value=hit_line(dist.get("head") or {}),
+        inline=True,
+    )
+    embed.add_field(
+        name="🛡️ Torso",
+        value=hit_line(dist.get("torso") or {}),
+        inline=True,
+    )
+    embed.add_field(
+        name="🦵 Legs",
+        value=hit_line(dist.get("leg") or {}),
+        inline=True,
+    )
+
+
+async def archive_screenshot(
+    client: discord.Client,
+    image_path: str,
+    original_name: str,
+    target: discord.Member,
+    submitted_by: discord.Member,
+):
+    if not ARCHIVE_CHANNEL_ID:
+        return None
+
+    try:
+        channel = client.get_channel(ARCHIVE_CHANNEL_ID)
+        if channel is None:
+            channel = await client.fetch_channel(ARCHIVE_CHANNEL_ID)
+
+        message = await channel.send(
+            content=(
+                "📊 **Exalted Era Stats Snapshot**\n"
+                f"Player: {target.mention} (`{target.id}`)\n"
+                f"Submitted by: {submitted_by.mention}"
+            ),
+            file=discord.File(image_path, filename=original_name),
+        )
+
+        if not message.attachments:
+            return None
+
+        attachment = message.attachments[0]
+        return {
+            "channel_id": message.channel.id,
+            "message_id": message.id,
+            "image_url": attachment.url,
+        }
+
+    except Exception as error:
+        print("Archive upload failed:", repr(error))
+        return None
 
 
 class ExaltedEraBot(discord.Client):
     def __init__(self):
-        # Slash commands do not require Message Content intent.
         super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # The local guild tree contains only /analyze.
-        # Syncing it also removes stale guild commands such as an old /test.
-        synced = await self.tree.sync(guild=GUILD)
-        names = ", ".join(f"/{cmd.name}" for cmd in synced) or "(none)"
+        await db.initialize()
+
+        # IMPORTANT DUPLICATE-COMMAND FIX:
+        # This bot intentionally uses GUILD commands only.
+        # First wipe any old GLOBAL commands left by previous versions.
+        self.tree.clear_commands(guild=None)
+        global_synced = await self.tree.sync()
         print(
-            f"Synced {len(synced)} slash command(s) "
-            f"to Exalted Era: {names}"
+            f"Global command cleanup complete: "
+            f"{len(global_synced)} global command(s) remain."
         )
+
+        # DO NOT clear the guild tree here.
+        # The decorators below have already registered the 5 current guild commands.
+        guild_synced = await self.tree.sync(guild=GUILD)
+        names = ", ".join(f"/{cmd.name}" for cmd in guild_synced)
+        print(
+            f"Guild sync complete: {len(guild_synced)} command(s): {names}"
+        )
+
+    async def close(self):
+        await db.close()
+        await super().close()
 
 
 bot = ExaltedEraBot()
@@ -52,65 +210,69 @@ bot = ExaltedEraBot()
 
 @bot.event
 async def on_ready():
-    print("=" * 50)
+    print("=" * 60)
     print(f"Logged in as: {bot.user}")
-    print(f"Bot ID: {bot.user.id if bot.user else 'Unknown'}")
-    print("Exalted Era Stats Bot is online!")
-    print("=" * 50)
+    print(f"Guild ID: {GUILD_ID}")
+    print(f"Database: {db.backend_name}")
+    print(
+        f"Stats archive channel: "
+        f"{ARCHIVE_CHANNEL_ID if ARCHIVE_CHANNEL_ID else 'NOT SET'}"
+    )
+    print("Exalted Era Stats Bot V4 CLEAN is online.")
+    print("=" * 60)
 
 
 @bot.tree.command(
     name="analyze",
-    description="Analyze a Valorant Mobile player statistics screenshot.",
+    description="Analyze and save a Valorant Mobile stats screenshot.",
     guild=GUILD,
 )
 @app_commands.describe(
-    screenshot="Upload the Valorant Mobile statistics screenshot."
+    screenshot="Upload the player's Valorant Mobile statistics screenshot.",
+    player="Player this screenshot belongs to. Defaults to you.",
 )
 async def analyze(
     interaction: discord.Interaction,
     screenshot: discord.Attachment,
+    player: Optional[discord.Member] = None,
 ):
-    # Acknowledge Discord immediately so the interaction does not time out.
     await interaction.response.defer(thinking=True)
 
-    content_type = (screenshot.content_type or "").lower()
-    suffix = Path(screenshot.filename).suffix.lower()
-    allowed_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
-
-    if not (
-        content_type.startswith("image/")
-        or suffix in allowed_suffixes
-    ):
+    target = player or interaction.user
+    if not isinstance(target, discord.Member):
         await interaction.followup.send(
-            "❌ Please upload a PNG, JPG, JPEG, or WEBP screenshot.",
+            "❌ I could not resolve that Discord member.",
             ephemeral=True,
         )
         return
 
-    if suffix not in allowed_suffixes:
+    suffix = Path(screenshot.filename).suffix.lower()
+    content_type = (screenshot.content_type or "").lower()
+    allowed = {".png", ".jpg", ".jpeg", ".webp"}
+
+    if not (content_type.startswith("image/") or suffix in allowed):
+        await interaction.followup.send(
+            "❌ Upload a PNG, JPG, JPEG, or WEBP screenshot.",
+            ephemeral=True,
+        )
+        return
+
+    if suffix not in allowed:
         suffix = ".png"
 
     temp_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=suffix,
-        ) as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_path = temp_file.name
 
         print("")
-        print("========== ANALYZE COMMAND ==========")
+        print("========== ANALYZE ==========")
         print(f"Requested by: {interaction.user}")
-        print(f"User ID: {interaction.user.id}")
+        print(f"Player: {target}")
         print(f"Filename: {screenshot.filename}")
-        print("Downloading screenshot...")
 
         await screenshot.save(temp_path)
-
-        print(f"Saved to: {temp_path}")
-        print("Sending screenshot to Gemini...")
 
         stats = await asyncio.wait_for(
             asyncio.to_thread(
@@ -118,136 +280,340 @@ async def analyze(
                 temp_path,
                 content_type or None,
             ),
-            timeout=90,
+            timeout=240,
         )
 
-        print("Gemini analysis completed.")
-        print(stats)
+        score, grade = calculate_rating(stats)
 
-        hit_distribution = stats.get("hit_distribution") or {}
-        head = hit_distribution.get("head") or {}
-        torso = hit_distribution.get("torso") or {}
-        leg = hit_distribution.get("leg") or {}
+        archived = await archive_screenshot(
+            bot,
+            temp_path,
+            screenshot.filename,
+            target,
+            interaction.user,
+        )
+
+        image_url = archived["image_url"] if archived else screenshot.url
+
+        snapshot_id = await db.add_snapshot(
+            guild_id=interaction.guild_id,
+            user_id=target.id,
+            username=target.name,
+            display_name=target.display_name,
+            stats=stats,
+            rating_score=score,
+            rating_grade=grade,
+            archive_channel_id=archived["channel_id"] if archived else None,
+            archive_message_id=archived["message_id"] if archived else None,
+            image_url=image_url,
+        )
 
         embed = discord.Embed(
-            title="🏆 EXALTED ERA PLAYER STATS",
-            description="**VALORANT MOBILE • PERFORMANCE ANALYSIS**",
+            title="🏆 EXALTED ERA PLAYER ANALYSIS",
+            description=(
+                f"### {target.display_name}\n"
+                f"Snapshot **#{snapshot_id}** saved."
+            ),
             color=discord.Color.gold(),
         )
 
-        # 1–3
+        add_core_stats(embed, stats)
+        add_hit_distribution(embed, stats)
         embed.add_field(
-            name="⚔️ Kills",
-            value=show(stats.get("kills")),
-            inline=True,
-        )
-        embed.add_field(
-            name="🎯 ACS",
-            value=show(stats.get("acs")),
-            inline=True,
-        )
-        embed.add_field(
-            name="💥 HS%",
-            value=show_percent(stats.get("headshot_percentage")),
-            inline=True,
-        )
-
-        # 4–6
-        embed.add_field(
-            name="🎮 Total Matches",
-            value=show(stats.get("total_matches")),
-            inline=True,
-        )
-        embed.add_field(
-            name="⚔️ K/D",
-            value=show(stats.get("kd_ratio")),
-            inline=True,
-        )
-        embed.add_field(
-            name="🔥 First Bloods",
-            value=show(stats.get("first_bloods")),
-            inline=True,
-        )
-
-        # 7: Head / Torso / Leg hit distribution
-        embed.add_field(
-            name="──────── HIT DISTRIBUTION ────────",
-            value="\u200b",
+            name="🏅 Exalted Performance",
+            value=f"**{grade} — {rating_label(grade)}**\n{score:.1f} / 100",
             inline=False,
         )
-
-        embed.add_field(
-            name="🎯 Head",
-            value=(
-                f"**{show_percent(head.get('percentage'))}**\n"
-                f"{show(head.get('count'))} Hits"
-            ),
-            inline=True,
-        )
-        embed.add_field(
-            name="🛡️ Torso",
-            value=(
-                f"**{show_percent(torso.get('percentage'))}**\n"
-                f"{show(torso.get('count'))} Hits"
-            ),
-            inline=True,
-        )
-        embed.add_field(
-            name="🦵 Legs",
-            value=(
-                f"**{show_percent(leg.get('percentage'))}**\n"
-                f"{show(leg.get('count'))} Hits"
-            ),
-            inline=True,
-        )
-
-        embed.set_footer(
-            text="EXALTED ERA • VALORANT MOBILE"
-        )
-
+        embed.set_footer(text="EXALTED ERA • VALORANT MOBILE")
         await interaction.followup.send(embed=embed)
-        print("Result sent to Discord.")
 
     except asyncio.TimeoutError:
-        print("Gemini analysis timed out.")
         await interaction.followup.send(
-            "⏱️ Analysis took too long. Please try the screenshot again.",
+            "⏱️ Analysis timed out after several Gemini attempts. Try again shortly.",
             ephemeral=True,
         )
 
     except Exception as error:
-        print("")
-        print("========== ANALYSIS ERROR ==========")
+        print("========== ANALYZE ERROR ==========")
         print(type(error).__name__)
         print(str(error))
-        print("====================================")
-        print("")
-
-        try:
-            await interaction.followup.send(
-                "❌ I couldn't analyze this screenshot. "
-                "Please check the Railway logs for the exact error.",
-                ephemeral=True,
-            )
-        except Exception as followup_error:
-            print(
-                "Could not send the Discord error message:",
-                repr(followup_error),
-            )
+        print("===================================")
+        await interaction.followup.send(
+            "❌ I couldn't analyze or save this screenshot. Check Railway logs.",
+            ephemeral=True,
+        )
 
     finally:
         if temp_path:
             try:
                 os.remove(temp_path)
-                print("Temporary screenshot deleted.")
             except FileNotFoundError:
                 pass
-            except Exception as cleanup_error:
-                print(
-                    "Could not delete temporary screenshot:",
-                    repr(cleanup_error),
-                )
+            except Exception as error:
+                print("Temporary file cleanup error:", repr(error))
 
 
-print("Starting Exalted Era Stats Bot...")
+@bot.tree.command(
+    name="stats",
+    description="Show a player's latest saved Valorant Mobile stats.",
+    guild=GUILD,
+)
+@app_commands.describe(player="Player to view. Defaults to you.")
+async def stats_command(
+    interaction: discord.Interaction,
+    player: Optional[discord.Member] = None,
+):
+    target = player or interaction.user
+    latest = await db.get_latest_snapshot(interaction.guild_id, target.id)
+
+    if not latest:
+        await interaction.response.send_message(
+            f"📭 No saved analysis for **{target.display_name}** yet. Use `/analyze` first.",
+            ephemeral=True,
+        )
+        return
+
+    current = snapshot_stats(latest)
+    embed = discord.Embed(
+        title="📊 EXALTED ERA STATS",
+        description=f"### {latest['display_name']}",
+        color=discord.Color.gold(),
+    )
+    add_core_stats(embed, current)
+    add_hit_distribution(embed, current)
+    embed.add_field(
+        name="🏅 Exalted Performance",
+        value=(
+            f"**{latest['rating_grade']} — "
+            f"{rating_label(latest['rating_grade'])}**\n"
+            f"{latest['rating_score']:.1f} / 100"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text=f"Latest snapshot #{latest['id']}")
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(
+    name="progress",
+    description="Show a player's latest screenshot and progress.",
+    guild=GUILD,
+)
+@app_commands.describe(player="Player to view. Defaults to you.")
+async def progress_command(
+    interaction: discord.Interaction,
+    player: Optional[discord.Member] = None,
+):
+    target = player or interaction.user
+    snapshots = await db.get_latest_snapshots(
+        interaction.guild_id,
+        target.id,
+        limit=2,
+    )
+
+    if not snapshots:
+        await interaction.response.send_message(
+            f"📭 No saved analysis for **{target.display_name}** yet.",
+            ephemeral=True,
+        )
+        return
+
+    latest = snapshots[0]
+    previous = snapshots[1] if len(snapshots) > 1 else None
+
+    embed = discord.Embed(
+        title="📈 EXALTED ERA PROGRESS REPORT",
+        description=f"### {latest['display_name']}",
+        color=discord.Color.gold(),
+    )
+
+    # Always show the player's latest saved screenshot.
+    if latest.get("image_url"):
+        embed.set_image(url=latest["image_url"])
+
+    if previous is None:
+        embed.add_field(
+            name="📊 Baseline Established",
+            value=(
+                "This is the player's first saved snapshot.\n"
+                "Run `/analyze` again later to measure progress."
+            ),
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="🎮 Matches",
+            value=(
+                f"{show(previous.get('total_matches'))} → "
+                f"{show(latest.get('total_matches'))}\n"
+                f"{delta_text(latest.get('total_matches'), previous.get('total_matches'), digits=0)}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="⚔️ Kills",
+            value=(
+                f"{show(previous.get('kills'))} → {show(latest.get('kills'))}\n"
+                f"{delta_text(latest.get('kills'), previous.get('kills'), digits=0)}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🎯 ACS",
+            value=(
+                f"{show(previous.get('acs'), 1)} → {show(latest.get('acs'), 1)}\n"
+                f"{delta_text(latest.get('acs'), previous.get('acs'), digits=1)}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="💥 HS%",
+            value=(
+                f"{show_percent(previous.get('headshot_percentage'))} → "
+                f"{show_percent(latest.get('headshot_percentage'))}\n"
+                f"{delta_text(latest.get('headshot_percentage'), previous.get('headshot_percentage'), percent=True, digits=1)}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="⚔️ K/D",
+            value=(
+                f"{show(previous.get('kd_ratio'), 2)} → "
+                f"{show(latest.get('kd_ratio'), 2)}\n"
+                f"{delta_text(latest.get('kd_ratio'), previous.get('kd_ratio'), digits=2)}"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🔥 First Bloods",
+            value=(
+                f"{show(previous.get('first_bloods'))} → "
+                f"{show(latest.get('first_bloods'))}\n"
+                f"{delta_text(latest.get('first_bloods'), previous.get('first_bloods'), digits=0)}"
+            ),
+            inline=True,
+        )
+
+        rating_delta = latest["rating_score"] - previous["rating_score"]
+        embed.add_field(
+            name="🏅 Performance Rating",
+            value=(
+                f"{previous['rating_grade']} {previous['rating_score']:.1f} → "
+                f"**{latest['rating_grade']} {latest['rating_score']:.1f}**\n"
+                f"{'▲ +' if rating_delta > 0 else '▼ ' if rating_delta < 0 else '• '}"
+                f"{rating_delta:.1f}"
+            ),
+            inline=False,
+        )
+
+    current = snapshot_stats(latest)
+    dist = current.get("hit_distribution") or {}
+    embed.add_field(
+        name="🎯 Latest Hit Distribution",
+        value=(
+            f"Head: {hit_line(dist.get('head') or {}).replace(chr(10), ' • ')}\n"
+            f"Torso: {hit_line(dist.get('torso') or {}).replace(chr(10), ' • ')}\n"
+            f"Legs: {hit_line(dist.get('leg') or {}).replace(chr(10), ' • ')}"
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(text=f"Latest snapshot #{latest['id']}")
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(
+    name="player",
+    description="Show a player's Exalted Era stats profile.",
+    guild=GUILD,
+)
+@app_commands.describe(player="Player profile to view. Defaults to you.")
+async def player_command(
+    interaction: discord.Interaction,
+    player: Optional[discord.Member] = None,
+):
+    target = player or interaction.user
+    latest = await db.get_latest_snapshot(interaction.guild_id, target.id)
+
+    if not latest:
+        await interaction.response.send_message(
+            f"📭 **{target.display_name}** has no saved stats profile yet.",
+            ephemeral=True,
+        )
+        return
+
+    count = await db.count_snapshots(interaction.guild_id, target.id)
+
+    embed = discord.Embed(
+        title="👤 EXALTED ERA PLAYER PROFILE",
+        description=f"### {latest['display_name']}",
+        color=discord.Color.gold(),
+    )
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.add_field(name="📚 Analyses", value=str(count), inline=True)
+    embed.add_field(
+        name="🎮 Matches",
+        value=show(latest.get("total_matches")),
+        inline=True,
+    )
+    embed.add_field(
+        name="🏅 Rating",
+        value=f"{latest['rating_grade']} • {latest['rating_score']:.1f}",
+        inline=True,
+    )
+    embed.add_field(name="🎯 ACS", value=show(latest.get("acs"), 1), inline=True)
+    embed.add_field(
+        name="⚔️ K/D",
+        value=show(latest.get("kd_ratio"), 2),
+        inline=True,
+    )
+    embed.add_field(
+        name="💥 HS%",
+        value=show_percent(latest.get("headshot_percentage")),
+        inline=True,
+    )
+    embed.set_footer(text=f"Latest snapshot #{latest['id']}")
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(
+    name="leaderboard",
+    description="Show the Exalted Era performance leaderboard.",
+    guild=GUILD,
+)
+async def leaderboard_command(interaction: discord.Interaction):
+    leaders = await db.get_leaderboard(interaction.guild_id, limit=10)
+
+    if not leaders:
+        await interaction.response.send_message(
+            "📭 No player snapshots have been saved yet.",
+            ephemeral=True,
+        )
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+
+    for index, row in enumerate(leaders, start=1):
+        prefix = medals[index - 1] if index <= 3 else f"`#{index}`"
+        lines.append(
+            f"{prefix} **{row['display_name']}** — "
+            f"**{row['rating_grade']} {row['rating_score']:.1f}** "
+            f"• ACS {show(row.get('acs'), 1)} "
+            f"• K/D {show(row.get('kd_ratio'), 2)} "
+            f"• HS {show_percent(row.get('headshot_percentage'))}"
+        )
+
+    embed = discord.Embed(
+        title="🏆 EXALTED ERA LEADERBOARD",
+        description="\n\n".join(lines),
+        color=discord.Color.gold(),
+    )
+    embed.set_footer(
+        text="Internal Exalted Performance Score • Latest snapshot per player"
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+print("Starting Exalted Era Stats Bot V4 CLEAN...")
 bot.run(TOKEN)
