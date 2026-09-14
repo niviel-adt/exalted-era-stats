@@ -1,6 +1,7 @@
-import os
 import asyncio
+import os
 import tempfile
+from pathlib import Path
 
 import discord
 from discord import app_commands
@@ -8,365 +9,213 @@ from dotenv import load_dotenv
 
 from gemini import analyze_valorant_image
 
-
-# =========================
-# LOAD ENVIRONMENT VARIABLES
-# =========================
-
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-
-if not TOKEN:
-    raise RuntimeError(
-        "DISCORD_TOKEN is missing from Railway environment variables."
-    )
-
-
-# =========================
-# EXALTED ERA SERVER
-# =========================
-
 GUILD_ID = 1545457876552655008
 GUILD = discord.Object(id=GUILD_ID)
 
+if not TOKEN:
+    raise RuntimeError(
+        "DISCORD_TOKEN is missing. Add it in Railway > Variables."
+    )
 
-# =========================
-# BOT CLASS
-# =========================
+
+def show(value):
+    """Display a normal value without turning 0 into N/A."""
+    return "N/A" if value is None else str(value)
+
+
+def show_percent(value):
+    return "N/A" if value is None else f"{value}%"
+
 
 class ExaltedEraBot(discord.Client):
-
     def __init__(self):
-        intents = discord.Intents.default()
-
-        super().__init__(intents=intents)
-
+        # Slash commands do not require Message Content intent.
+        super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-
-        try:
-            synced = await self.tree.sync(guild=GUILD)
-
-            print(
-                f"Synced {len(synced)} slash command(s) "
-                f"to Exalted Era."
-            )
-
-            for command in synced:
-                print(f"Synced command: /{command.name}")
-
-        except Exception as error:
-
-            print("========== COMMAND SYNC ERROR ==========")
-            print(type(error).__name__)
-            print(str(error))
-            print("=========================================")
+        # The local guild tree contains only /analyze.
+        # Syncing it also removes stale guild commands such as an old /test.
+        synced = await self.tree.sync(guild=GUILD)
+        names = ", ".join(f"/{cmd.name}" for cmd in synced) or "(none)"
+        print(
+            f"Synced {len(synced)} slash command(s) "
+            f"to Exalted Era: {names}"
+        )
 
 
 bot = ExaltedEraBot()
 
 
-# =========================
-# BOT READY
-# =========================
-
 @bot.event
 async def on_ready():
-
-    print("")
-    print("========================================")
+    print("=" * 50)
     print(f"Logged in as: {bot.user}")
-    print(f"Bot ID: {bot.user.id}")
+    print(f"Bot ID: {bot.user.id if bot.user else 'Unknown'}")
     print("Exalted Era Stats Bot is online!")
-    print("========================================")
-    print("")
+    print("=" * 50)
 
-
-# =========================
-# /TEST COMMAND
-# =========================
-
-@bot.tree.command(
-    name="test",
-    description="Check if the Exalted Era Stats Bot is working.",
-    guild=GUILD
-)
-async def test(interaction: discord.Interaction):
-
-    await interaction.response.send_message(
-        "🏆 **EXALTED ERA STATS BOT**\n\n"
-        "✅ Bot is online and working.\n"
-        "✅ Slash commands are responding.\n\n"
-        "**THE ERA IS HERE.**"
-    )
-
-
-# =========================
-# /ANALYZE COMMAND
-# =========================
 
 @bot.tree.command(
     name="analyze",
-    description="Analyze a Valorant Mobile statistics screenshot.",
-    guild=GUILD
+    description="Analyze a Valorant Mobile player statistics screenshot.",
+    guild=GUILD,
 )
 @app_commands.describe(
-    screenshot="Upload your Valorant Mobile statistics screenshot."
+    screenshot="Upload the Valorant Mobile statistics screenshot."
 )
 async def analyze(
     interaction: discord.Interaction,
-    screenshot: discord.Attachment
+    screenshot: discord.Attachment,
 ):
+    # Acknowledge Discord immediately so the interaction does not time out.
+    await interaction.response.defer(thinking=True)
 
-    # Immediately acknowledge Discord
-    # so it does not show "Application did not respond"
-    try:
-        await interaction.response.defer(thinking=True)
+    content_type = (screenshot.content_type or "").lower()
+    suffix = Path(screenshot.filename).suffix.lower()
+    allowed_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
 
-    except Exception as error:
-
-        print("Could not defer interaction:")
-        print(type(error).__name__)
-        print(str(error))
-
-        return
-
-    print("")
-    print("========== ANALYZE COMMAND ==========")
-    print(f"Requested by: {interaction.user}")
-    print(f"User ID: {interaction.user.id}")
-    print(f"Filename: {screenshot.filename}")
-    print(f"Content type: {screenshot.content_type}")
-    print("=====================================")
-
-
-    # =========================
-    # VALIDATE IMAGE
-    # =========================
-
-    valid_extensions = (
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".webp"
-    )
-
-    filename = screenshot.filename.lower()
-
-    is_image_type = (
-        screenshot.content_type
-        and screenshot.content_type.startswith("image/")
-    )
-
-    is_image_extension = filename.endswith(valid_extensions)
-
-    if not is_image_type and not is_image_extension:
-
+    if not (
+        content_type.startswith("image/")
+        or suffix in allowed_suffixes
+    ):
         await interaction.followup.send(
-            "❌ Please upload a valid image.\n\n"
-            "Supported formats:\n"
-            "`PNG`, `JPG`, `JPEG`, `WEBP`"
+            "❌ Please upload a PNG, JPG, JPEG, or WEBP screenshot.",
+            ephemeral=True,
         )
-
         return
 
-
-    # =========================
-    # CREATE UNIQUE TEMP FILE
-    # =========================
-
-    suffix = os.path.splitext(screenshot.filename)[1]
-
-    if not suffix:
+    if suffix not in allowed_suffixes:
         suffix = ".png"
 
-    temp_file = tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=suffix
-    )
-
-    image_path = temp_file.name
-
-    temp_file.close()
-
+    temp_path = None
 
     try:
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=suffix,
+        ) as temp_file:
+            temp_path = temp_file.name
 
-        # =========================
-        # DOWNLOAD SCREENSHOT
-        # =========================
-
+        print("")
+        print("========== ANALYZE COMMAND ==========")
+        print(f"Requested by: {interaction.user}")
+        print(f"User ID: {interaction.user.id}")
+        print(f"Filename: {screenshot.filename}")
         print("Downloading screenshot...")
 
-        await screenshot.save(image_path)
+        await screenshot.save(temp_path)
 
-        print(f"Screenshot saved to: {image_path}")
-
-
-        # =========================
-        # SEND TO GEMINI
-        # =========================
-
+        print(f"Saved to: {temp_path}")
         print("Sending screenshot to Gemini...")
 
         stats = await asyncio.wait_for(
             asyncio.to_thread(
                 analyze_valorant_image,
-                image_path
+                temp_path,
+                content_type or None,
             ),
-            timeout=90
+            timeout=90,
         )
 
         print("Gemini analysis completed.")
-
-        print("Gemini result:")
         print(stats)
 
-
-        # =========================
-        # VALIDATE RESULT
-        # =========================
-
-        if not isinstance(stats, dict):
-
-            raise ValueError(
-                "Gemini did not return a valid statistics dictionary."
-            )
-
-
-        # =========================
-        # FORMAT RESULTS
-        # =========================
-
-        player_name = (
-            stats.get("player_name")
-            or "Unknown Player"
-        )
-
-        kills = (
-            stats.get("kills")
-            if stats.get("kills") is not None
-            else "N/A"
-        )
-
-        deaths = (
-            stats.get("deaths")
-            if stats.get("deaths") is not None
-            else "N/A"
-        )
-
-        assists = (
-            stats.get("assists")
-            if stats.get("assists") is not None
-            else "N/A"
-        )
-
-        acs = (
-            stats.get("acs")
-            if stats.get("acs") is not None
-            else "N/A"
-        )
-
-        headshot = (
-            stats.get("headshot_percentage")
-            if stats.get("headshot_percentage") is not None
-            else "N/A"
-        )
-
-        result = stats.get("result") or "N/A"
-
-
-        # Add percent symbol if Gemini returns a number
-        if headshot != "N/A":
-
-            headshot = f"{headshot}%"
-
-
-        # =========================
-        # CREATE DISCORD EMBED
-        # =========================
+        hit_distribution = stats.get("hit_distribution") or {}
+        head = hit_distribution.get("head") or {}
+        torso = hit_distribution.get("torso") or {}
+        leg = hit_distribution.get("leg") or {}
 
         embed = discord.Embed(
-            title="🏆 EXALTED ERA PERFORMANCE",
-            description=f"### {player_name}",
-            color=discord.Color.gold()
+            title="🏆 EXALTED ERA PLAYER STATS",
+            description="**VALORANT MOBILE • PERFORMANCE ANALYSIS**",
+            color=discord.Color.gold(),
         )
 
+        # 1–3
         embed.add_field(
             name="⚔️ Kills",
-            value=str(kills),
-            inline=True
+            value=show(stats.get("kills")),
+            inline=True,
         )
-
-        embed.add_field(
-            name="💀 Deaths",
-            value=str(deaths),
-            inline=True
-        )
-
-        embed.add_field(
-            name="🤝 Assists",
-            value=str(assists),
-            inline=True
-        )
-
         embed.add_field(
             name="🎯 ACS",
-            value=str(acs),
-            inline=True
+            value=show(stats.get("acs")),
+            inline=True,
         )
-
         embed.add_field(
             name="💥 HS%",
-            value=str(headshot),
-            inline=True
+            value=show_percent(stats.get("headshot_percentage")),
+            inline=True,
+        )
+
+        # 4–6
+        embed.add_field(
+            name="🎮 Total Matches",
+            value=show(stats.get("total_matches")),
+            inline=True,
+        )
+        embed.add_field(
+            name="⚔️ K/D",
+            value=show(stats.get("kd_ratio")),
+            inline=True,
+        )
+        embed.add_field(
+            name="🔥 First Bloods",
+            value=show(stats.get("first_bloods")),
+            inline=True,
+        )
+
+        # 7: Head / Torso / Leg hit distribution
+        embed.add_field(
+            name="──────── HIT DISTRIBUTION ────────",
+            value="\u200b",
+            inline=False,
         )
 
         embed.add_field(
-            name="🏁 Result",
-            value=str(result).upper(),
-            inline=True
+            name="🎯 Head",
+            value=(
+                f"**{show_percent(head.get('percentage'))}**\n"
+                f"{show(head.get('count'))} Hits"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🛡️ Torso",
+            value=(
+                f"**{show_percent(torso.get('percentage'))}**\n"
+                f"{show(torso.get('count'))} Hits"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🦵 Legs",
+            value=(
+                f"**{show_percent(leg.get('percentage'))}**\n"
+                f"{show(leg.get('count'))} Hits"
+            ),
+            inline=True,
         )
 
         embed.set_footer(
-            text="EXALTED ERA • THE ERA IS HERE."
+            text="EXALTED ERA • VALORANT MOBILE"
         )
 
-
-        # =========================
-        # SEND RESULT
-        # =========================
-
-        await interaction.followup.send(
-            embed=embed
-        )
-
-        print("Analysis result sent successfully.")
-
-
-    # =========================
-    # TIMEOUT
-    # =========================
+        await interaction.followup.send(embed=embed)
+        print("Result sent to Discord.")
 
     except asyncio.TimeoutError:
-
         print("Gemini analysis timed out.")
-
         await interaction.followup.send(
-            "⏱️ **Analysis timed out.**\n\n"
-            "Gemini took longer than 90 seconds. "
-            "Please try the screenshot again."
+            "⏱️ Analysis took too long. Please try the screenshot again.",
+            ephemeral=True,
         )
 
-
-    # =========================
-    # OTHER ERRORS
-    # =========================
-
     except Exception as error:
-
         print("")
         print("========== ANALYSIS ERROR ==========")
         print(type(error).__name__)
@@ -375,46 +224,30 @@ async def analyze(
         print("")
 
         try:
-
             await interaction.followup.send(
-                "❌ **I couldn't analyze this screenshot.**\n\n"
-                "Please try again. If it keeps happening, "
-                "check the Railway logs for the error."
+                "❌ I couldn't analyze this screenshot. "
+                "Please check the Railway logs for the exact error.",
+                ephemeral=True,
             )
-
         except Exception as followup_error:
-
-            print("Could not send error response:")
-            print(type(followup_error).__name__)
-            print(str(followup_error))
-
-
-    # =========================
-    # DELETE TEMP IMAGE
-    # =========================
+            print(
+                "Could not send the Discord error message:",
+                repr(followup_error),
+            )
 
     finally:
-
-        try:
-
-            if os.path.exists(image_path):
-
-                os.remove(image_path)
-
+        if temp_path:
+            try:
+                os.remove(temp_path)
                 print("Temporary screenshot deleted.")
+            except FileNotFoundError:
+                pass
+            except Exception as cleanup_error:
+                print(
+                    "Could not delete temporary screenshot:",
+                    repr(cleanup_error),
+                )
 
-        except Exception as cleanup_error:
-
-            print(
-                f"Could not delete temporary image: "
-                f"{cleanup_error}"
-            )
-
-
-# =========================
-# RUN BOT
-# =========================
 
 print("Starting Exalted Era Stats Bot...")
-
 bot.run(TOKEN)
