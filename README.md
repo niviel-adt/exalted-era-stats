@@ -1,28 +1,17 @@
-# Exalted Era Stats Bot
+# Exalted Era Stats Bot - Fixed
 
-Discord bot for reading Valorant screenshots with Gemini and preparing player performance statistics.
+Upload this folder to GitHub and connect it to Railway.
 
-## Commands
+Railway Variables:
+- DISCORD_TOKEN
+- GEMINI_API_KEY
 
-- `!test` — checks whether the bot is online.
-- `!analyze` + attached image — reads a Valorant screenshot.
+The bot registers /test and /analyze directly to server:
+1545457876552655008
 
-## Local setup
+Expected startup log:
+Synced 2 slash command(s) to Exalted Era.
+Logged in as ...
+Exalted Era Stats Bot is online!
 
-1. Install Python 3.11+.
-2. Open a terminal in this folder.
-3. Run:
-
-```bash
-pip install -r requirements.txt
-```
-
-4. Copy `.env.example` to `.env`.
-5. Put your Discord bot token and Gemini API key in `.env`.
-6. Run:
-
-```bash
-python bot.py
-```
-
-Do not commit `.env` to GitHub.
+Never put API keys in GitHub.

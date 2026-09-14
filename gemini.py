@@ -1,69 +1,53 @@
 import os
 import json
-
 from google import genai
 from PIL import Image
 
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    raise RuntimeError("GEMINI_API_KEY is missing from Railway environment variables.")
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
-
+client = genai.Client(api_key=API_KEY)
 
 def analyze_valorant_image(image_path):
-
     image = Image.open(image_path)
 
     prompt = """
 You are a Valorant Mobile China statistics extraction system.
-
 The screenshot may contain Chinese text.
 
-Your job is to:
-1. Read the screenshot.
-2. Understand Chinese labels.
-3. Identify the player's statistics.
-4. Translate the relevant information into English.
-5. Return ONLY valid JSON.
+Read the screenshot and extract the player's match statistics.
 
-Use exactly this format:
+Return ONLY valid JSON in exactly this structure:
 
 {
-    "player_name": null,
-    "kills": null,
-    "deaths": null,
-    "assists": null,
-    "acs": null,
-    "headshot_percentage": null,
-    "result": null
+  "player_name": null,
+  "kills": null,
+  "deaths": null,
+  "assists": null,
+  "acs": null,
+  "headshot_percentage": null,
+  "result": null
 }
 
 Rules:
-
-- The screenshot may contain Chinese.
-- Translate Chinese labels into English.
-- "result" must be "win", "loss", or null.
-- Do not guess values.
-- Use null when a value cannot be clearly read.
-- Numbers must be numbers, not strings.
+- Understand and translate Chinese labels into English.
 - Keep the player's name as shown when possible.
-- Return ONLY raw JSON.
-- Do not use markdown.
-- Do not add explanations.
+- "result" must be "win", "loss", or null.
+- Do not guess.
+- Use null when a value cannot be clearly read.
+- Numeric values must be JSON numbers, not strings.
+- Return raw JSON only. No markdown or explanations.
 """
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=[
-            prompt,
-            image
-        ]
+        contents=[prompt, image]
     )
 
-    text = response.text.strip()
-
-    text = text.replace("```json", "")
-    text = text.replace("```", "")
-    text = text.strip()
+    text = (response.text or "").strip()
+    if text.startswith("```"):
+        text = text.replace("```json", "", 1)
+        text = text.replace("```", "", 1).strip()
 
     return json.loads(text)
