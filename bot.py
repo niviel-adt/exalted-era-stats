@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 
 from database import Database
 from gemini import analyze_valorant_image
+from player_card import render_player_card
 from ratings import calculate_rating, rating_label
 
 load_dotenv()
@@ -89,50 +91,18 @@ def snapshot_stats(snapshot: dict):
 def add_core_stats(embed: discord.Embed, stats: dict):
     embed.add_field(name="⚔️ Kills", value=show(stats.get("kills")), inline=True)
     embed.add_field(name="🎯 ACS", value=show(stats.get("acs"), 1), inline=True)
-    embed.add_field(
-        name="💥 HS%",
-        value=show_percent(stats.get("headshot_percentage")),
-        inline=True,
-    )
-    embed.add_field(
-        name="🎮 Total Matches",
-        value=show(stats.get("total_matches")),
-        inline=True,
-    )
-    embed.add_field(
-        name="⚔️ K/D",
-        value=show(stats.get("kd_ratio"), 2),
-        inline=True,
-    )
-    embed.add_field(
-        name="🔥 First Bloods",
-        value=show(stats.get("first_bloods")),
-        inline=True,
-    )
+    embed.add_field(name="💥 HS%", value=show_percent(stats.get("headshot_percentage")), inline=True)
+    embed.add_field(name="🎮 Total Matches", value=show(stats.get("total_matches")), inline=True)
+    embed.add_field(name="⚔️ K/D", value=show(stats.get("kd_ratio"), 2), inline=True)
+    embed.add_field(name="🔥 First Bloods", value=show(stats.get("first_bloods")), inline=True)
 
 
 def add_hit_distribution(embed: discord.Embed, stats: dict):
     dist = stats.get("hit_distribution") or {}
-    embed.add_field(
-        name="──────── HIT DISTRIBUTION ────────",
-        value="\u200b",
-        inline=False,
-    )
-    embed.add_field(
-        name="🎯 Head",
-        value=hit_line(dist.get("head") or {}),
-        inline=True,
-    )
-    embed.add_field(
-        name="🛡️ Torso",
-        value=hit_line(dist.get("torso") or {}),
-        inline=True,
-    )
-    embed.add_field(
-        name="🦵 Legs",
-        value=hit_line(dist.get("leg") or {}),
-        inline=True,
-    )
+    embed.add_field(name="──────── HIT DISTRIBUTION ────────", value="\u200b", inline=False)
+    embed.add_field(name="🎯 Head", value=hit_line(dist.get("head") or {}), inline=True)
+    embed.add_field(name="🛡️ Torso", value=hit_line(dist.get("torso") or {}), inline=True)
+    embed.add_field(name="🦵 Legs", value=hit_line(dist.get("leg") or {}), inline=True)
 
 
 async def archive_screenshot(
@@ -182,23 +152,14 @@ class ExaltedEraBot(discord.Client):
     async def setup_hook(self):
         await db.initialize()
 
-        # IMPORTANT DUPLICATE-COMMAND FIX:
-        # This bot intentionally uses GUILD commands only.
-        # First wipe any old GLOBAL commands left by previous versions.
+        # Clear old global commands left by earlier versions of the bot.
         self.tree.clear_commands(guild=None)
         global_synced = await self.tree.sync()
-        print(
-            f"Global command cleanup complete: "
-            f"{len(global_synced)} global command(s) remain."
-        )
+        print(f"Global command cleanup complete: {len(global_synced)} global command(s) remain.")
 
-        # DO NOT clear the guild tree here.
-        # The decorators below have already registered the 5 current guild commands.
         guild_synced = await self.tree.sync(guild=GUILD)
         names = ", ".join(f"/{cmd.name}" for cmd in guild_synced)
-        print(
-            f"Guild sync complete: {len(guild_synced)} command(s): {names}"
-        )
+        print(f"Guild sync complete: {len(guild_synced)} command(s): {names}")
 
     async def close(self):
         await db.close()
@@ -210,16 +171,13 @@ bot = ExaltedEraBot()
 
 @bot.event
 async def on_ready():
-    print("=" * 60)
+    print("=" * 64)
     print(f"Logged in as: {bot.user}")
     print(f"Guild ID: {GUILD_ID}")
     print(f"Database: {db.backend_name}")
-    print(
-        f"Stats archive channel: "
-        f"{ARCHIVE_CHANNEL_ID if ARCHIVE_CHANNEL_ID else 'NOT SET'}"
-    )
-    print("Exalted Era Stats Bot V4 CLEAN is online.")
-    print("=" * 60)
+    print(f"Stats archive channel: {ARCHIVE_CHANNEL_ID if ARCHIVE_CHANNEL_ID else 'NOT SET'}")
+    print("Exalted Era Stats Bot V5 PLAYER CARD is online.")
+    print("=" * 64)
 
 
 @bot.tree.command(
@@ -240,10 +198,7 @@ async def analyze(
 
     target = player or interaction.user
     if not isinstance(target, discord.Member):
-        await interaction.followup.send(
-            "❌ I could not resolve that Discord member.",
-            ephemeral=True,
-        )
+        await interaction.followup.send("❌ I could not resolve that Discord member.", ephemeral=True)
         return
 
     suffix = Path(screenshot.filename).suffix.lower()
@@ -275,11 +230,7 @@ async def analyze(
         await screenshot.save(temp_path)
 
         stats = await asyncio.wait_for(
-            asyncio.to_thread(
-                analyze_valorant_image,
-                temp_path,
-                content_type or None,
-            ),
+            asyncio.to_thread(analyze_valorant_image, temp_path, content_type or None),
             timeout=240,
         )
 
@@ -310,13 +261,9 @@ async def analyze(
 
         embed = discord.Embed(
             title="🏆 EXALTED ERA PLAYER ANALYSIS",
-            description=(
-                f"### {target.display_name}\n"
-                f"Snapshot **#{snapshot_id}** saved."
-            ),
+            description=f"### {target.display_name}\nSnapshot **#{snapshot_id}** saved.",
             color=discord.Color.gold(),
         )
-
         add_core_stats(embed, stats)
         add_hit_distribution(embed, stats)
         embed.add_field(
@@ -359,10 +306,7 @@ async def analyze(
     guild=GUILD,
 )
 @app_commands.describe(player="Player to view. Defaults to you.")
-async def stats_command(
-    interaction: discord.Interaction,
-    player: Optional[discord.Member] = None,
-):
+async def stats_command(interaction: discord.Interaction, player: Optional[discord.Member] = None):
     target = player or interaction.user
     latest = await db.get_latest_snapshot(interaction.guild_id, target.id)
 
@@ -383,11 +327,7 @@ async def stats_command(
     add_hit_distribution(embed, current)
     embed.add_field(
         name="🏅 Exalted Performance",
-        value=(
-            f"**{latest['rating_grade']} — "
-            f"{rating_label(latest['rating_grade'])}**\n"
-            f"{latest['rating_score']:.1f} / 100"
-        ),
+        value=f"**{latest['rating_grade']} — {rating_label(latest['rating_grade'])}**\n{latest['rating_score']:.1f} / 100",
         inline=False,
     )
     embed.set_footer(text=f"Latest snapshot #{latest['id']}")
@@ -400,16 +340,9 @@ async def stats_command(
     guild=GUILD,
 )
 @app_commands.describe(player="Player to view. Defaults to you.")
-async def progress_command(
-    interaction: discord.Interaction,
-    player: Optional[discord.Member] = None,
-):
+async def progress_command(interaction: discord.Interaction, player: Optional[discord.Member] = None):
     target = player or interaction.user
-    snapshots = await db.get_latest_snapshots(
-        interaction.guild_id,
-        target.id,
-        limit=2,
-    )
+    snapshots = await db.get_latest_snapshots(interaction.guild_id, target.id, limit=2)
 
     if not snapshots:
         await interaction.response.send_message(
@@ -427,25 +360,20 @@ async def progress_command(
         color=discord.Color.gold(),
     )
 
-    # Always show the player's latest saved screenshot.
     if latest.get("image_url"):
         embed.set_image(url=latest["image_url"])
 
     if previous is None:
         embed.add_field(
             name="📊 Baseline Established",
-            value=(
-                "This is the player's first saved snapshot.\n"
-                "Run `/analyze` again later to measure progress."
-            ),
+            value="This is the player's first saved snapshot.\nRun `/analyze` again later to measure progress.",
             inline=False,
         )
     else:
         embed.add_field(
             name="🎮 Matches",
             value=(
-                f"{show(previous.get('total_matches'))} → "
-                f"{show(latest.get('total_matches'))}\n"
+                f"{show(previous.get('total_matches'))} → {show(latest.get('total_matches'))}\n"
                 f"{delta_text(latest.get('total_matches'), previous.get('total_matches'), digits=0)}"
             ),
             inline=True,
@@ -469,8 +397,7 @@ async def progress_command(
         embed.add_field(
             name="💥 HS%",
             value=(
-                f"{show_percent(previous.get('headshot_percentage'))} → "
-                f"{show_percent(latest.get('headshot_percentage'))}\n"
+                f"{show_percent(previous.get('headshot_percentage'))} → {show_percent(latest.get('headshot_percentage'))}\n"
                 f"{delta_text(latest.get('headshot_percentage'), previous.get('headshot_percentage'), percent=True, digits=1)}"
             ),
             inline=True,
@@ -478,8 +405,7 @@ async def progress_command(
         embed.add_field(
             name="⚔️ K/D",
             value=(
-                f"{show(previous.get('kd_ratio'), 2)} → "
-                f"{show(latest.get('kd_ratio'), 2)}\n"
+                f"{show(previous.get('kd_ratio'), 2)} → {show(latest.get('kd_ratio'), 2)}\n"
                 f"{delta_text(latest.get('kd_ratio'), previous.get('kd_ratio'), digits=2)}"
             ),
             inline=True,
@@ -487,21 +413,19 @@ async def progress_command(
         embed.add_field(
             name="🔥 First Bloods",
             value=(
-                f"{show(previous.get('first_bloods'))} → "
-                f"{show(latest.get('first_bloods'))}\n"
+                f"{show(previous.get('first_bloods'))} → {show(latest.get('first_bloods'))}\n"
                 f"{delta_text(latest.get('first_bloods'), previous.get('first_bloods'), digits=0)}"
             ),
             inline=True,
         )
 
         rating_delta = latest["rating_score"] - previous["rating_score"]
+        marker = "▲ +" if rating_delta > 0 else "▼ " if rating_delta < 0 else "• "
         embed.add_field(
             name="🏅 Performance Rating",
             value=(
-                f"{previous['rating_grade']} {previous['rating_score']:.1f} → "
-                f"**{latest['rating_grade']} {latest['rating_score']:.1f}**\n"
-                f"{'▲ +' if rating_delta > 0 else '▼ ' if rating_delta < 0 else '• '}"
-                f"{rating_delta:.1f}"
+                f"{previous['rating_grade']} {previous['rating_score']:.1f} → **{latest['rating_grade']} {latest['rating_score']:.1f}**\n"
+                f"{marker}{rating_delta:.1f}"
             ),
             inline=False,
         )
@@ -517,63 +441,64 @@ async def progress_command(
         ),
         inline=False,
     )
-
     embed.set_footer(text=f"Latest snapshot #{latest['id']}")
     await interaction.response.send_message(embed=embed)
 
 
 @bot.tree.command(
     name="player",
-    description="Show a player's Exalted Era stats profile.",
+    description="Generate the player card image for a player.",
     guild=GUILD,
 )
 @app_commands.describe(player="Player profile to view. Defaults to you.")
-async def player_command(
-    interaction: discord.Interaction,
-    player: Optional[discord.Member] = None,
-):
+async def player_command(interaction: discord.Interaction, player: Optional[discord.Member] = None):
+    await interaction.response.defer(thinking=True)
+
     target = player or interaction.user
     latest = await db.get_latest_snapshot(interaction.guild_id, target.id)
 
     if not latest:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"📭 **{target.display_name}** has no saved stats profile yet.",
             ephemeral=True,
         )
         return
 
-    count = await db.count_snapshots(interaction.guild_id, target.id)
+    try:
+        avatar_bytes = await target.display_avatar.read()
+        card_bytes = await asyncio.to_thread(
+            render_player_card,
+            template_path="player_card_template.png",
+            player_name=latest["display_name"],
+            rating_grade=latest["rating_grade"],
+            acs=latest.get("acs"),
+            kd_ratio=latest.get("kd_ratio"),
+            hs_percent=latest.get("headshot_percentage"),
+            kills=latest.get("kills"),
+            total_matches=latest.get("total_matches"),
+            first_bloods=latest.get("first_bloods"),
+            avatar_bytes=avatar_bytes,
+        )
 
-    embed = discord.Embed(
-        title="👤 EXALTED ERA PLAYER PROFILE",
-        description=f"### {latest['display_name']}",
-        color=discord.Color.gold(),
-    )
-    embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="📚 Analyses", value=str(count), inline=True)
-    embed.add_field(
-        name="🎮 Matches",
-        value=show(latest.get("total_matches")),
-        inline=True,
-    )
-    embed.add_field(
-        name="🏅 Rating",
-        value=f"{latest['rating_grade']} • {latest['rating_score']:.1f}",
-        inline=True,
-    )
-    embed.add_field(name="🎯 ACS", value=show(latest.get("acs"), 1), inline=True)
-    embed.add_field(
-        name="⚔️ K/D",
-        value=show(latest.get("kd_ratio"), 2),
-        inline=True,
-    )
-    embed.add_field(
-        name="💥 HS%",
-        value=show_percent(latest.get("headshot_percentage")),
-        inline=True,
-    )
-    embed.set_footer(text=f"Latest snapshot #{latest['id']}")
-    await interaction.response.send_message(embed=embed)
+        file = discord.File(
+            io.BytesIO(card_bytes),
+            filename=f"{target.display_name.lower().replace(' ', '_')}_player_card.png",
+        )
+
+        await interaction.followup.send(
+            content=f"👤 **{latest['display_name']}** • Exalted Era player card",
+            file=file,
+        )
+
+    except Exception as error:
+        print("========== PLAYER CARD ERROR ==========")
+        print(type(error).__name__)
+        print(str(error))
+        print("=======================================")
+        await interaction.followup.send(
+            "❌ I couldn't generate the player card image. Check Railway logs.",
+            ephemeral=True,
+        )
 
 
 @bot.tree.command(
@@ -609,11 +534,9 @@ async def leaderboard_command(interaction: discord.Interaction):
         description="\n\n".join(lines),
         color=discord.Color.gold(),
     )
-    embed.set_footer(
-        text="Internal Exalted Performance Score • Latest snapshot per player"
-    )
+    embed.set_footer(text="Internal Exalted Performance Score • Latest snapshot per player")
     await interaction.response.send_message(embed=embed)
 
 
-print("Starting Exalted Era Stats Bot V4 CLEAN...")
+print("Starting Exalted Era Stats Bot V5 PLAYER CARD...")
 bot.run(TOKEN)

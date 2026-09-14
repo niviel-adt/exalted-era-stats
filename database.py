@@ -59,24 +59,13 @@ class Database:
         """
 
         if self.is_postgres:
-            self.pool = await asyncpg.create_pool(
-                self.database_url,
-                min_size=1,
-                max_size=5,
-            )
+            self.pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=5)
             async with self.pool.acquire() as conn:
-                await conn.execute(
-                    schema.format(
-                        id_type="BIGSERIAL PRIMARY KEY",
-                        time_type="TIMESTAMPTZ",
-                    )
-                )
+                await conn.execute(schema.format(id_type="BIGSERIAL PRIMARY KEY", time_type="TIMESTAMPTZ"))
                 await conn.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_snapshots_player_time
-                    ON player_snapshots (
-                        guild_id, user_id, created_at DESC, id DESC
-                    )
+                    ON player_snapshots (guild_id, user_id, created_at DESC, id DESC)
                     """
                 )
         else:
@@ -90,9 +79,7 @@ class Database:
                 await conn.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_snapshots_player_time
-                    ON player_snapshots (
-                        guild_id, user_id, created_at DESC, id DESC
-                    )
+                    ON player_snapshots (guild_id, user_id, created_at DESC, id DESC)
                     """
                 )
                 await conn.commit()
@@ -139,29 +126,15 @@ class Database:
         image_url: Optional[str],
     ):
         s = self.flat_stats(stats)
-
         values = (
-            guild_id,
-            user_id,
-            username,
-            display_name,
-            s["kills"],
-            s["acs"],
-            s["headshot_percentage"],
-            s["total_matches"],
-            s["kd_ratio"],
-            s["first_bloods"],
-            s["head_count"],
-            s["head_percentage"],
-            s["torso_count"],
-            s["torso_percentage"],
-            s["leg_count"],
-            s["leg_percentage"],
-            rating_score,
-            rating_grade,
-            archive_channel_id,
-            archive_message_id,
-            image_url,
+            guild_id, user_id, username, display_name,
+            s["kills"], s["acs"], s["headshot_percentage"], s["total_matches"],
+            s["kd_ratio"], s["first_bloods"],
+            s["head_count"], s["head_percentage"],
+            s["torso_count"], s["torso_percentage"],
+            s["leg_count"], s["leg_percentage"],
+            rating_score, rating_grade,
+            archive_channel_id, archive_message_id, image_url,
         )
 
         columns = """
@@ -180,10 +153,7 @@ class Database:
                 row = await conn.fetchrow(
                     f"""
                     INSERT INTO player_snapshots ({columns})
-                    VALUES (
-                        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
-                        $12,$13,$14,$15,$16,$17,$18,$19,$20,$21
-                    )
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
                     RETURNING id
                     """,
                     *values,
@@ -212,9 +182,7 @@ class Database:
                     ORDER BY created_at DESC, id DESC
                     LIMIT $3
                     """,
-                    guild_id,
-                    user_id,
-                    limit,
+                    guild_id, user_id, limit,
                 )
                 return [dict(row) for row in rows]
 
@@ -240,23 +208,14 @@ class Database:
         if self.is_postgres:
             async with self.pool.acquire() as conn:
                 value = await conn.fetchval(
-                    """
-                    SELECT COUNT(*)
-                    FROM player_snapshots
-                    WHERE guild_id=$1 AND user_id=$2
-                    """,
-                    guild_id,
-                    user_id,
+                    "SELECT COUNT(*) FROM player_snapshots WHERE guild_id=$1 AND user_id=$2",
+                    guild_id, user_id,
                 )
                 return int(value or 0)
 
         async with aiosqlite.connect(self.sqlite_path) as conn:
             cursor = await conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM player_snapshots
-                WHERE guild_id=? AND user_id=?
-                """,
+                "SELECT COUNT(*) FROM player_snapshots WHERE guild_id=? AND user_id=?",
                 (guild_id, user_id),
             )
             row = await cursor.fetchone()
@@ -268,12 +227,7 @@ class Database:
                 rows = [
                     dict(row)
                     for row in await conn.fetch(
-                        """
-                        SELECT *
-                        FROM player_snapshots
-                        WHERE guild_id=$1
-                        ORDER BY created_at DESC, id DESC
-                        """,
+                        "SELECT * FROM player_snapshots WHERE guild_id=$1 ORDER BY created_at DESC, id DESC",
                         guild_id,
                     )
                 ]
@@ -281,12 +235,7 @@ class Database:
             async with aiosqlite.connect(self.sqlite_path) as conn:
                 conn.row_factory = aiosqlite.Row
                 cursor = await conn.execute(
-                    """
-                    SELECT *
-                    FROM player_snapshots
-                    WHERE guild_id=?
-                    ORDER BY created_at DESC, id DESC
-                    """,
+                    "SELECT * FROM player_snapshots WHERE guild_id=? ORDER BY created_at DESC, id DESC",
                     (guild_id,),
                 )
                 rows = [dict(row) for row in await cursor.fetchall()]

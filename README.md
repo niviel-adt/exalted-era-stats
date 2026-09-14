@@ -1,66 +1,68 @@
-# Exalted Era Stats Bot V4 CLEAN
+# Exalted Era Stats Bot V5 PLAYER CARD
 
-This version fixes duplicate Discord slash commands.
+This version keeps the working V4 system and upgrades `/player` to generate a **PNG player card** using your supplied Exalted Era template.
 
-## Why you were seeing two `/analyze` commands
+## New `/player`
+`/player` now:
+1. loads the member's latest saved stats
+2. loads `player_card_template.png`
+3. uses the member's **Discord avatar** as the photo
+4. inserts:
+   - Player Name
+   - Rating
+   - ACS
+   - K/D
+   - HS%
+   - Kills
+   - Matches
+   - First Bloods
+5. sends the finished PNG card in Discord
 
-Your GitHub repository still had the older bot at the repository root.
-The newer folder had not actually replaced the root project.
+## Included template
+This ZIP already includes:
+- `player_card_template.png`
 
-V4 does two command sync operations on startup:
+Detected template size:
+- `1024 x 1536`
 
-1. Deletes old GLOBAL commands for this bot application.
-2. Syncs exactly these five GUILD commands to Exalted Era:
-
+## Commands
 - `/analyze`
 - `/stats`
 - `/progress`
 - `/player`
 - `/leaderboard`
 
-## IMPORTANT upload instructions
+## Important
+- `/player` uses the player's **Discord avatar** automatically.
+- You still need `/analyze` first so the bot has stats saved in the database.
+- `/progress` still shows the latest saved screenshot for that player.
 
-The ZIP has the project files directly at its root.
-
-In GitHub, your repository root should show:
-
-- bot.py
-- gemini.py
-- database.py
-- ratings.py
-- requirements.txt
-- Procfile
-- README.md
-- .gitignore
-
-Do NOT leave the old bot.py beside a nested `exalted-era-stats-v4-clean/` folder.
+## Files at repo root
+- `bot.py`
+- `gemini.py`
+- `database.py`
+- `ratings.py`
+- `player_card.py`
+- `player_card_template.png`
+- `requirements.txt`
+- `Procfile`
+- `.env.example`
+- `.gitignore`
+- `README.md`
 
 ## Railway variables
-
 Required:
-
 - `DISCORD_TOKEN`
 - `GEMINI_API_KEY`
 - `GUILD_ID=1545457876552655008`
 
 Recommended:
-
 - `DATABASE_URL`
 - `STATS_ARCHIVE_CHANNEL_ID`
 
-## Expected Railway startup log
-
+## Expected startup
 ```text
 Global command cleanup complete: 0 global command(s) remain.
 Guild sync complete: 5 command(s): /analyze, /stats, /progress, /player, /leaderboard
-Exalted Era Stats Bot V4 CLEAN is online.
+Exalted Era Stats Bot V5 PLAYER CARD is online.
 ```
-
-If Discord still shows two `/analyze` commands after this exact log:
-- press Ctrl+R / restart Discord;
-- confirm there is not a second Discord bot/application installed in the server with its own `/analyze`;
-- confirm only one Railway service is running this bot token.
-
-## `/progress`
-
-`/progress` shows the latest screenshot saved for the selected player and compares it with the previous snapshot.

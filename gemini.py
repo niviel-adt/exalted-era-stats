@@ -58,7 +58,7 @@ Important:
 - Never estimate from the radar graph.
 - Never invent unreadable values; use null.
 - Numeric values must be JSON numbers, not strings.
-- Percentages must omit the % symbol.
+- Percentages must omit the %% symbol.
 - Do not return player name, win rate, MVP, recent record, deaths,
   assists, or result.
 - Return JSON only.
@@ -135,18 +135,9 @@ def normalize(data: dict):
         "kd_ratio": data.get("kd_ratio"),
         "first_bloods": data.get("first_bloods"),
         "hit_distribution": {
-            "head": {
-                "count": head.get("count"),
-                "percentage": head.get("percentage"),
-            },
-            "torso": {
-                "count": torso.get("count"),
-                "percentage": torso.get("percentage"),
-            },
-            "leg": {
-                "count": leg.get("count"),
-                "percentage": leg.get("percentage"),
-            },
+            "head": {"count": head.get("count"), "percentage": head.get("percentage")},
+            "torso": {"count": torso.get("count"), "percentage": torso.get("percentage")},
+            "leg": {"count": leg.get("count"), "percentage": leg.get("percentage")},
         },
     }
 
@@ -171,7 +162,6 @@ def generate_with_fallback(image_part):
         for attempt in range(1, 3):
             try:
                 print(f"Trying {model}, attempt {attempt}/2")
-
                 response = client.models.generate_content(
                     model=model,
                     contents=[PROMPT, image_part],
@@ -179,7 +169,6 @@ def generate_with_fallback(image_part):
                         response_mime_type="application/json",
                     ),
                 )
-
                 print(f"Gemini success: {model}")
                 return response
 
@@ -189,11 +178,9 @@ def generate_with_fallback(image_part):
                 print(f"Gemini API error: model={model}, code={code}")
                 print(str(error))
 
-                # Model unavailable for the account: try next one immediately.
                 if code == 404:
                     break
 
-                # Temporary server/capacity/rate errors.
                 if code in {429, 500, 502, 503, 504}:
                     if attempt < 2:
                         delay = (2 ** attempt) + random.uniform(0.5, 1.5)
@@ -204,29 +191,19 @@ def generate_with_fallback(image_part):
 
                 raise
 
-    raise RuntimeError(
-        "All Gemini fallback models failed. "
-        f"Last error: {last_error}"
-    )
+    raise RuntimeError(f"All Gemini fallback models failed. Last error: {last_error}")
 
 
-def analyze_valorant_image(
-    image_path: str,
-    discord_content_type: str | None = None,
-):
+def analyze_valorant_image(image_path: str, discord_content_type: str | None = None):
     path = Path(image_path)
 
     mime_type = (
         discord_content_type
-        if discord_content_type
-        and discord_content_type.startswith("image/")
+        if discord_content_type and discord_content_type.startswith("image/")
         else mimetypes.guess_type(path.name)[0]
     ) or "image/png"
 
-    image_part = types.Part.from_bytes(
-        data=path.read_bytes(),
-        mime_type=mime_type,
-    )
+    image_part = types.Part.from_bytes(data=path.read_bytes(), mime_type=mime_type)
 
     response = generate_with_fallback(image_part)
     text = clean_json(response.text)
@@ -238,9 +215,7 @@ def analyze_valorant_image(
         data = json.loads(text)
     except json.JSONDecodeError as error:
         print("Raw Gemini response:", response.text)
-        raise RuntimeError(
-            f"Gemini returned invalid JSON: {error}"
-        ) from error
+        raise RuntimeError(f"Gemini returned invalid JSON: {error}") from error
 
     if not isinstance(data, dict):
         raise RuntimeError("Gemini response was not a JSON object.")
