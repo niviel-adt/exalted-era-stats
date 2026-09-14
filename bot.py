@@ -152,7 +152,6 @@ class ExaltedEraBot(discord.Client):
     async def setup_hook(self):
         await db.initialize()
 
-        # Clear old global commands left by earlier versions of the bot.
         self.tree.clear_commands(guild=None)
         global_synced = await self.tree.sync()
         print(f"Global command cleanup complete: {len(global_synced)} global command(s) remain.")
@@ -176,7 +175,7 @@ async def on_ready():
     print(f"Guild ID: {GUILD_ID}")
     print(f"Database: {db.backend_name}")
     print(f"Stats archive channel: {ARCHIVE_CHANNEL_ID if ARCHIVE_CHANNEL_ID else 'NOT SET'}")
-    print("Exalted Era Stats Bot V5 PLAYER CARD is online.")
+    print("Exalted Era Stats Bot V6 CARD FIX is online.")
     print("=" * 64)
 
 
@@ -466,11 +465,13 @@ async def player_command(interaction: discord.Interaction, player: Optional[disc
 
     try:
         avatar_bytes = await target.display_avatar.read()
+
         card_bytes = await asyncio.to_thread(
             render_player_card,
             template_path="player_card_template.png",
             player_name=latest["display_name"],
-            rating_grade=latest["rating_grade"],
+            rating_score=latest.get("rating_score"),
+            rating_grade=latest.get("rating_grade"),
             acs=latest.get("acs"),
             kd_ratio=latest.get("kd_ratio"),
             hs_percent=latest.get("headshot_percentage"),
@@ -480,10 +481,8 @@ async def player_command(interaction: discord.Interaction, player: Optional[disc
             avatar_bytes=avatar_bytes,
         )
 
-        file = discord.File(
-            io.BytesIO(card_bytes),
-            filename=f"{target.display_name.lower().replace(' ', '_')}_player_card.png",
-        )
+        filename = f"{target.display_name.lower().replace(' ', '_')}_player_card.png"
+        file = discord.File(io.BytesIO(card_bytes), filename=filename)
 
         await interaction.followup.send(
             content=f"👤 **{latest['display_name']}** • Exalted Era player card",
@@ -538,5 +537,5 @@ async def leaderboard_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-print("Starting Exalted Era Stats Bot V5 PLAYER CARD...")
+print("Starting Exalted Era Stats Bot V6 CARD FIX...")
 bot.run(TOKEN)

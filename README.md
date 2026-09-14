@@ -1,43 +1,30 @@
-# Exalted Era Stats Bot V5 PLAYER CARD
+# Exalted Era Stats Bot V6 CARD FIX
 
-This version keeps the working V4 system and upgrades `/player` to generate a **PNG player card** using your supplied Exalted Era template.
+This is the **full replacement folder** using your new player-card image template.
 
-## New `/player`
-`/player` now:
-1. loads the member's latest saved stats
-2. loads `player_card_template.png`
-3. uses the member's **Discord avatar** as the photo
-4. inserts:
-   - Player Name
-   - Rating
-   - ACS
-   - K/D
-   - HS%
-   - Kills
-   - Matches
-   - First Bloods
-5. sends the finished PNG card in Discord
+## What V6 fixes
+- uses the new player-card template image
+- `/player` now covers the old sample text/numbers before drawing new values
+- the player name now replaces the placeholder cleanly
+- the portrait area is larger and rectangular instead of a small circle
+- stat values are larger and centered better
+- `/analyze`, `/stats`, `/progress`, and `/leaderboard` still work the same
 
-## Included template
-This ZIP already includes:
-- `player_card_template.png`
+## `/player` uses
+- Discord avatar as the photo
+- latest saved database stats from `/analyze`
 
-Detected template size:
-- `1024 x 1536`
+Displayed on the card:
+- Rating (numeric performance score)
+- ACS
+- K/D
+- HS%
+- Kills
+- Matches
+- First Bloods
+- Grade subtitle under player name
 
-## Commands
-- `/analyze`
-- `/stats`
-- `/progress`
-- `/player`
-- `/leaderboard`
-
-## Important
-- `/player` uses the player's **Discord avatar** automatically.
-- You still need `/analyze` first so the bot has stats saved in the database.
-- `/progress` still shows the latest saved screenshot for that player.
-
-## Files at repo root
+## Replace your repo with these files at the ROOT
 - `bot.py`
 - `gemini.py`
 - `database.py`
@@ -50,19 +37,15 @@ Detected template size:
 - `.gitignore`
 - `README.md`
 
-## Railway variables
-Required:
-- `DISCORD_TOKEN`
-- `GEMINI_API_KEY`
-- `GUILD_ID=1545457876552655008`
-
-Recommended:
-- `DATABASE_URL`
-- `STATS_ARCHIVE_CHANNEL_ID`
+## Important
+Delete the old player-card template and old player_card.py if they are still in your repo before committing.
 
 ## Expected startup
 ```text
 Global command cleanup complete: 0 global command(s) remain.
 Guild sync complete: 5 command(s): /analyze, /stats, /progress, /player, /leaderboard
-Exalted Era Stats Bot V5 PLAYER CARD is online.
+Exalted Era Stats Bot V6 CARD FIX is online.
 ```
+
+## Included template size
+- 941 x 1672

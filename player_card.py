@@ -1,5 +1,4 @@
 import io
-import textwrap
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -12,17 +11,15 @@ def _font(size: int, bold: bool = False):
         "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]
-
     for candidate in candidates:
         try:
             return ImageFont.truetype(candidate, size=size)
         except Exception:
             continue
-
     return ImageFont.load_default()
 
 
-def _fit_font(draw, text, max_width, start_size, min_size=18, bold=False):
+def _fit_font(draw, text, max_width, start_size, min_size=14, bold=True):
     size = start_size
     while size >= min_size:
         font = _font(size, bold=bold)
@@ -33,38 +30,34 @@ def _fit_font(draw, text, max_width, start_size, min_size=18, bold=False):
     return _font(min_size, bold=bold)
 
 
-def _draw_centered(draw, center_xy, text, font, fill):
+def _center(draw, xy, text, font, fill):
     bbox = draw.textbbox((0, 0), text, font=font)
-    x = center_xy[0] - (bbox[2] - bbox[0]) / 2
-    y = center_xy[1] - (bbox[3] - bbox[1]) / 2
+    x = xy[0] - (bbox[2] - bbox[0]) / 2
+    y = xy[1] - (bbox[3] - bbox[1]) / 2
     draw.text((x, y), text, font=font, fill=fill)
 
 
-def _format_number(value, digits=None, percent=False):
+def _fmt(value, digits=None, percent=False):
     if value is None:
-        return "N/A"
-
-    if isinstance(value, float):
-        digits = 2 if digits is None else digits
+        text = "N/A"
+    elif isinstance(value, float):
+        digits = 1 if digits is None else digits
         text = f"{value:.{digits}f}".rstrip("0").rstrip(".")
     else:
         text = f"{value:,}"
-
-    if percent:
-        return f"{text}%"
-    return text
+    return f"{text}%" if percent and text != "N/A" else text
 
 
-def _avatar_image(avatar_bytes, size):
-    avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
-    avatar = ImageOps.fit(avatar, (size, size), method=Image.LANCZOS)
+def _rounded_photo(avatar_bytes, size_xy, radius=24):
+    image = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+    image = ImageOps.fit(image, size_xy, method=Image.LANCZOS)
 
-    mask = Image.new("L", (size, size), 0)
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.ellipse((0, 0, size, size), fill=255)
+    mask = Image.new("L", size_xy, 0)
+    d = ImageDraw.Draw(mask)
+    d.rounded_rectangle((0, 0, size_xy[0], size_xy[1]), radius=radius, fill=255)
 
-    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    out.paste(avatar, (0, 0), mask)
+    out = Image.new("RGBA", size_xy, (0, 0, 0, 0))
+    out.paste(image, (0, 0), mask)
     return out
 
 
@@ -72,7 +65,8 @@ def render_player_card(
     *,
     template_path: str,
     player_name: str,
-    rating_grade: str,
+    rating_score,
+    rating_grade,
     acs,
     kd_ratio,
     hs_percent,
@@ -82,93 +76,141 @@ def render_player_card(
     avatar_bytes: bytes,
 ) -> bytes:
     base = Image.open(Path(template_path)).convert("RGBA")
+    w, h = base.size
     draw = ImageDraw.Draw(base)
 
-    width, height = base.size
+    dark_fill = (3, 3, 5, 245)
+    gold = (244, 223, 186, 255)
+    bright = (255, 240, 215, 255)
+    subtle = (220, 196, 160, 255)
 
-    # Relative layout tuned for the supplied template.
-    gold = (242, 224, 194, 255)
-    bright = (255, 244, 225, 255)
-    subtle = (225, 205, 170, 255)
+    def rr(box, fill, radius=16, outline=None, width=0):
+        draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
-    # Player photo slot
-    photo_box = (
-        int(width * 0.299),
-        int(height * 0.159),
-        int(width * 0.703),
-        int(height * 0.464),
+    # --- PHOTO AREA ---
+    photo_frame = (
+        int(w * 0.252),
+        int(h * 0.226),
+        int(w * 0.747),
+        int(h * 0.602),
     )
-    photo_w = photo_box[2] - photo_box[0]
-    photo_h = photo_box[3] - photo_box[1]
-    avatar_size = min(photo_w, photo_h) - int(width * 0.03)
-    avatar = _avatar_image(avatar_bytes, avatar_size)
-    avatar_x = photo_box[0] + (photo_w - avatar_size) // 2
-    avatar_y = photo_box[1] + int((photo_h - avatar_size) * 0.42)
-    base.alpha_composite(avatar, dest=(avatar_x, avatar_y))
-
-    # Soft glow ring around avatar
-    glow = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow)
-    margin = int(width * 0.012)
-    ring_box = (
-        avatar_x - margin,
-        avatar_y - margin,
-        avatar_x + avatar_size + margin,
-        avatar_y + avatar_size + margin,
+    inner_pad_x = int(w * 0.018)
+    inner_pad_y = int(h * 0.014)
+    photo_inner = (
+        photo_frame[0] + inner_pad_x,
+        photo_frame[1] + inner_pad_y,
+        photo_frame[2] - inner_pad_x,
+        photo_frame[3] - inner_pad_y,
     )
-    glow_draw.ellipse(ring_box, outline=(255, 228, 170, 150), width=max(3, width // 256))
-    base = Image.alpha_composite(base, glow)
+
+    rr(photo_inner, dark_fill, radius=28)
+    photo_size = (photo_inner[2] - photo_inner[0], photo_inner[3] - photo_inner[1])
+    photo = _rounded_photo(avatar_bytes, photo_size, radius=28)
+    base.alpha_composite(photo, dest=(photo_inner[0], photo_inner[1]))
+
+    # subtle dark gradient band under portrait so text reads clearly
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    od.rectangle(
+        (
+            photo_inner[0],
+            int(h * 0.53),
+            photo_inner[2],
+            photo_inner[3],
+        ),
+        fill=(0, 0, 0, 70),
+    )
+    base = Image.alpha_composite(base, overlay)
     draw = ImageDraw.Draw(base)
 
-    # Player name
-    max_name_width = int(width * 0.50)
-    name_font = _fit_font(draw, player_name.upper(), max_name_width, start_size=max(26, width // 17), min_size=18, bold=False)
-    _draw_centered(draw, (width * 0.53, height * 0.552), player_name.upper(), name_font, bright)
+    # --- NAME AREA ---
+    # cover the old placeholder cleanly, then draw the real name
+    name_box = (
+        int(w * 0.150),
+        int(h * 0.628),
+        int(w * 0.852),
+        int(h * 0.697),
+    )
+    rr(name_box, (2, 2, 4, 235), radius=12)
 
-    # Primary 3 stats row
-    title_font = _font(max(18, width // 38), bold=False)
-    value_font_large = _font(max(28, width // 24), bold=True)
-    value_font_medium = _font(max(24, width // 27), bold=True)
+    name_text = str(player_name or "PLAYER").upper()
+    name_font = _fit_font(draw, name_text, int(w * 0.56), start_size=max(28, w // 14), min_size=20, bold=True)
+    _center(draw, (w * 0.50, h * 0.664), name_text, name_font, bright)
 
-    # The template already has labels, so we only place values.
-    stats_top_y = height * 0.70
-    second_row_y = height * 0.812
+    # small grade subtitle
+    grade_text = f"GRADE {rating_grade}" if rating_grade else "EXALTED ERA"
+    grade_font = _fit_font(draw, grade_text, int(w * 0.28), start_size=max(12, w // 55), min_size=10, bold=False)
+    _center(draw, (w * 0.50, h * 0.690), grade_text, grade_font, subtle)
 
-    centers_top = [
-        (width * 0.245, stats_top_y),
-        (width * 0.500, stats_top_y),
-        (width * 0.754, stats_top_y),
+    # --- VALUE MASKS ---
+    def mask_value(cx, cy, bw, bh):
+        rr(
+            (
+                int(cx - bw / 2),
+                int(cy - bh / 2),
+                int(cx + bw / 2),
+                int(cy + bh / 2),
+            ),
+            (2, 2, 4, 228),
+            radius=10,
+        )
+
+    # mask the old sample numbers only, preserving labels/icons
+    top_y = h * 0.808
+    bottom_y = h * 0.918
+
+    for cx in [w * 0.163, w * 0.398, w * 0.616, w * 0.842]:
+        mask_value(cx, top_y, w * 0.125, h * 0.052)
+
+    for cx in [w * 0.220, w * 0.500, w * 0.780]:
+        mask_value(cx, bottom_y, w * 0.155, h * 0.058)
+
+    # --- VALUES ---
+    rating_display = _fmt(rating_score, digits=1)
+    acs_display = _fmt(acs, digits=0)
+    kd_display = _fmt(kd_ratio, digits=2)
+    hs_display = _fmt(hs_percent, digits=1, percent=True)
+    kills_display = _fmt(kills, digits=0)
+    matches_display = _fmt(total_matches, digits=0)
+    fb_display = _fmt(first_bloods, digits=0)
+
+    top_centers = [
+        (w * 0.163, top_y),
+        (w * 0.398, top_y),
+        (w * 0.616, top_y),
+        (w * 0.842, top_y),
     ]
-    top_values = [
-        rating_grade,
-        _format_number(acs, digits=1),
-        _format_number(kd_ratio, digits=2),
+    top_text = [
+        rating_display,
+        acs_display,
+        kd_display,
+        hs_display,
     ]
 
-    for center, value in zip(centers_top, top_values):
-        _draw_centered(draw, (center[0], center[1]), value, value_font_large, gold)
+    for (cx, cy), value in zip(top_centers, top_text):
+        font = _fit_font(draw, value, int(w * 0.12), start_size=max(28, w // 18), min_size=20, bold=True)
+        _center(draw, (cx, cy), value, font, gold)
 
-    centers_bottom = [
-        (width * 0.198, second_row_y),
-        (width * 0.398, second_row_y),
-        (width * 0.600, second_row_y),
-        (width * 0.800, second_row_y),
+    bottom_centers = [
+        (w * 0.220, bottom_y),
+        (w * 0.500, bottom_y),
+        (w * 0.780, bottom_y),
     ]
-    bottom_values = [
-        _format_number(hs_percent, digits=1, percent=True),
-        _format_number(kills, digits=0),
-        _format_number(total_matches, digits=0),
-        _format_number(first_bloods, digits=0),
+    bottom_text = [
+        kills_display,
+        matches_display,
+        fb_display,
     ]
 
-    for center, value in zip(centers_bottom, bottom_values):
-        font = _fit_font(draw, value, int(width * 0.15), start_size=max(20, width // 27), min_size=16, bold=True)
-        _draw_centered(draw, (center[0], center[1]), value, font, gold)
+    for (cx, cy), value in zip(bottom_centers, bottom_text):
+        font = _fit_font(draw, value, int(w * 0.15), start_size=max(28, w // 18), min_size=20, bold=True)
+        _center(draw, (cx, cy), value, font, gold)
 
-    # Tiny subtitle under portrait: Discord player card style
-    small_font = _font(max(14, width // 52), bold=False)
-    _draw_centered(draw, (width * 0.50, height * 0.448), "EXALTED ERA PLAYER", small_font, subtle)
+    # subtle player caption beneath photo
+    caption = "PLAYER CARD"
+    caption_font = _fit_font(draw, caption, int(w * 0.22), start_size=max(12, w // 60), min_size=10, bold=False)
+    _center(draw, (w * 0.50, h * 0.590), caption, caption_font, subtle)
 
-    output = io.BytesIO()
-    base.save(output, format="PNG")
-    return output.getvalue()
+    out = io.BytesIO()
+    base.save(out, format="PNG")
+    return out.getvalue()
