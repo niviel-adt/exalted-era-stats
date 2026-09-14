@@ -1,25 +1,31 @@
 import os
 import json
+
 from google import genai
 from PIL import Image
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY")
+)
+
 
 def analyze_valorant_image(image_path):
+
     image = Image.open(image_path)
 
-  prompt = """
-You are a Valorant Mobile statistics extraction system.
+    prompt = """
+You are a Valorant Mobile China statistics extraction system.
 
-The screenshot may be from Valorant Mobile China and may contain Chinese text.
+The screenshot may contain Chinese text.
 
 Your job is to:
-1. Read and understand the Chinese text and numbers in the screenshot.
-2. Identify the player's match statistics.
-3. Translate any relevant Chinese labels or results into English.
-4. Return the final data ONLY in English.
+1. Read and understand the Chinese text.
+2. Identify the player's statistics.
+3. Translate relevant Chinese labels into English.
+4. Return the final data in English.
 
-Return ONLY valid JSON in this exact format:
+Return ONLY valid JSON using this exact format:
 
 {
     "player_name": null,
@@ -32,22 +38,32 @@ Return ONLY valid JSON in this exact format:
 }
 
 Rules:
-- The input screenshot may contain Chinese.
-- Translate the result into English.
-- result must ONLY be "win", "loss", or null.
-- Keep the player's name exactly as shown unless it is Chinese, in which case provide an English/romanized version if clearly possible.
+
+- The screenshot may contain Chinese.
+- Translate Chinese labels and match results into English.
+- "result" must be "win", "loss", or null.
 - Do not guess.
 - Use null if a value cannot be clearly read.
 - Numbers must be numbers, not strings.
-- Return ONLY raw valid JSON.
-- Do not include explanations or markdown.
+- Keep the player's name as shown when possible.
+- Return ONLY raw JSON.
+- Do not include markdown.
+- Do not include explanations.
 """
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=[prompt, image]
+        contents=[
+            prompt,
+            image
+        ]
     )
 
     text = response.text.strip()
-    text = text.replace("```json", "").replace("```", "").strip()
+
+    # Remove markdown code fences if Gemini adds them
+    text = text.replace("```json", "")
+    text = text.replace("```", "")
+    text = text.strip()
+
     return json.loads(text)
