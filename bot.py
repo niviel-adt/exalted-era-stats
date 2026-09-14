@@ -175,7 +175,7 @@ async def on_ready():
     print(f"Guild ID: {GUILD_ID}")
     print(f"Database: {db.backend_name}")
     print(f"Stats archive channel: {ARCHIVE_CHANNEL_ID if ARCHIVE_CHANNEL_ID else 'NOT SET'}")
-    print("Exalted Era Stats Bot V6 CARD FIX is online.")
+    print("Exalted Era Stats Bot V7 CLEAN CARD is online.")
     print("=" * 64)
 
 
@@ -537,5 +537,5 @@ async def leaderboard_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-print("Starting Exalted Era Stats Bot V6 CARD FIX...")
+print("Starting Exalted Era Stats Bot V7 CLEAN CARD...")
 bot.run(TOKEN)
