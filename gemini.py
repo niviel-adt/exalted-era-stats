@@ -5,9 +5,12 @@ from PIL import Image
 
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is missing from Railway environment variables.")
+    raise RuntimeError(
+        "GEMINI_API_KEY is missing from Railway environment variables."
+    )
 
 client = genai.Client(api_key=API_KEY)
+
 
 def analyze_valorant_image(image_path):
     image = Image.open(image_path)
@@ -15,7 +18,6 @@ def analyze_valorant_image(image_path):
     prompt = """
 You are a Valorant Mobile China statistics extraction system.
 The screenshot may contain Chinese text.
-
 Read the screenshot and extract the player's match statistics.
 
 Return ONLY valid JSON in exactly this structure:
@@ -42,10 +44,11 @@ Rules:
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=[prompt, image]
+        contents=[prompt, image],
     )
 
     text = (response.text or "").strip()
+
     if text.startswith("```"):
         text = text.replace("```json", "", 1)
         text = text.replace("```", "", 1).strip()
