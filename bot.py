@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from database import Database
 from gemini import analyze_valorant_image
 from player_card import render_player_card
-from ratings import calculate_rating, rating_label
+from ratings import InvalidStats, calculate_rating, rating_label, validate_rating_stats
 
 load_dotenv()
 
@@ -233,6 +233,7 @@ async def analyze(
             timeout=240,
         )
 
+        stats = validate_rating_stats(stats)
         score, grade = calculate_rating(stats)
 
         archived = await archive_screenshot(
@@ -272,6 +273,14 @@ async def analyze(
         )
         embed.set_footer(text="EXALTED ERA • VALORANT MOBILE")
         await interaction.followup.send(embed=embed)
+
+    except InvalidStats as error:
+        await interaction.followup.send(
+            f"❌ This screenshot could not be rated reliably: {error} "
+            "Upload a clear screenshot showing all six statistics from the same period. "
+            "Your saved stats have not been changed.",
+            ephemeral=True,
+        )
 
     except asyncio.TimeoutError:
         await interaction.followup.send(
@@ -539,3 +548,4 @@ async def leaderboard_command(interaction: discord.Interaction):
 
 print("Starting Exalted Era Stats Bot V7 CLEAN CARD...")
 bot.run(TOKEN)
+
