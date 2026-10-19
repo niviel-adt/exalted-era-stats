@@ -167,6 +167,7 @@ def generate_with_fallback(image_part):
                     contents=[PROMPT, image_part],
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
+                        temperature=0,
                     ),
                 )
                 print(f"Gemini success: {model}")
@@ -221,3 +222,4 @@ def analyze_valorant_image(image_path: str, discord_content_type: str | None = N
         raise RuntimeError("Gemini response was not a JSON object.")
 
     return normalize(data)
+
